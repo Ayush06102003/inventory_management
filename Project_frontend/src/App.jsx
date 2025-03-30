@@ -1,4 +1,3 @@
-// App.js
 import React from 'react';
 import { BrowserRouter, Route, Routes } from 'react-router-dom';
 import { Login, Dashboard, AddAdmin, AddDepartment, Department } from './Pages';
@@ -10,27 +9,34 @@ const App = () => {
   return (
     <div className='w-full'>
       <BrowserRouter>
-        <Routes>
-          <Route path="/login" element={<Login />} />
-          <Route path="/forget-password" element={<ForgotPassword />} />
-          <Route path="/reset-password/:token" element={<ResetPassword />} />
-          <Route
-            path="/*"
-            element={
-              <ContractProvider>
-                <>
-                  <Sidebar />
-                  <Routes>
-                    <Route path="/" element={<Dashboard />} />
-                    <Route path="/addadmin" element={<AddAdmin />} />
-                    <Route path='/adddepartment' element={<AddDepartment/>} />
-                    <Route path='/department/:departmentAddress' element={<Department/>} />
-                  </Routes>
-                </>
-              </ContractProvider>
-            }
-          />
-        </Routes>
+        <ContractProvider>
+          <Routes>
+            {/* Public Routes */}
+            <Route path="/" element={<Login />} />
+            <Route path="/forget-password" element={<ForgotPassword />} />
+            <Route path="/reset-password/:token" element={<ResetPassword />} />
+
+            {/* Protected Routes */}
+            <Route
+              path="/*"
+              element={
+                <PrivateRoute>
+                  <div className="flex">
+                    <Sidebar />
+                    <div className="flex-1">
+                      <Routes>
+                        <Route path="/dashboard" element={<Dashboard />} />
+                        <Route path="/addadmin" element={<AddAdmin />} />
+                        <Route path='/adddepartment' element={<AddDepartment />} />
+                        <Route path='/department/:departmentAddress' element={<Department />} />
+                      </Routes>
+                    </div>
+                  </div>
+                </PrivateRoute>
+              }
+            />
+          </Routes>
+        </ContractProvider>
       </BrowserRouter>
     </div>
   );

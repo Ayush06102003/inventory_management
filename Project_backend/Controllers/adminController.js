@@ -1,4 +1,6 @@
-const Admin = require('../Models/adminModel')
+const jwt = require('jsonwebtoken');
+const Admin = require('../Models/adminModel');
+const bcrypt = require('bcryptjs');
 const ErrorResponse = require('../utils/errorResponse');
 const sendEmail = require('../utils/sendEmail');
 const crypto = require('crypto')
@@ -20,30 +22,44 @@ const register = async (req, res, next) => {
 }
 
 const adminLogin = async (req, res, next) => {
-    const { email, password } = req.body
+    const { email, password } = req.body;
+
+    // Validate input
     if (!email || !password) {
-        return next(new ErrorResponse("Please provide an email and password", 400))
+        return next(new ErrorResponse("Please provide an email and password", 400));
     }
 
     try {
-        const user = await Admin.findOne({ email }).select("+password")
+        const user = await Admin.findOne({ email }).select("+password");
 
         if (!user) {
-            return next(new ErrorResponse("Invalid Credentials", 401))
+            return next(new ErrorResponse("Invalid Credentials", 401));
         }
 
-        const isMatch = await user.matchPasswords(password)
-
+        // Password validation
+        const isMatch = await bcrypt.compare(password, user.password);
+        
         if (!isMatch) {
-            return next(new ErrorResponse("Invalid Credentials", 404))
+            return next(new ErrorResponse("Invalid Credentials", 404));
         }
 
-        sendToken(user, 201, res)
+        // JWT token with department info
+        const token = jwt.sign(
+            { id: user._id, department: user.department }, // Include department
+            process.env.JWT_SECRET,
+            { expiresIn: '1h' }
+        );
+
+        res.status(200).json({
+            success: true,
+            token,
+            department: user.department  // Return department to the frontend
+        });
+
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
     }
-    catch (error) {
-        res.status(500).json({ success: false, error: error.message })
-    }
-}
+};
 
 const forgotPassword = async (req, res, next) => {
     const { email } = req.body
@@ -115,9 +131,18 @@ const resetPassword = async (req, res, next) => {
 }
 
 const sendToken = (user, statusCode, res) => {
-    const token = user.getSignedToken()
-    res.status(statusCode).json({ success: true, token })
-}
+    const token = jwt.sign(
+        { id: user._id, department: user.department }, // Include department in token
+        process.env.JWT_SECRET,
+        { expiresIn: '1h' }
+    );
+
+    res.status(statusCode).json({
+        success: true,
+        token,
+        department: user.department  // Include department in the response
+    });
+};
 
 const addAdmin = async(req,res,next) => {
     const { email, username, password } = req.body
