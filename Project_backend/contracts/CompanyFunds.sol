@@ -1,24 +1,27 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
+pragma solidity ^0.8.21;
 
 contract CompanyFunds {
     struct Department {
         address[] admins;
-        mapping(address => bool) isAdmin;
         uint256 balance;
-        mapping(uint256 => bool) requests;
-        string departmentName;
         uint256[] requestsLists;
+        string departmentName;
+        mapping(uint256 => bool) requests;
     }
 
     address public companyAccount;
     address[] public companyAdmins;
-    mapping(address => Department) public departments;
-    address[] public allDepartments;
+    mapping(string => Department) public departments;  // Use department names as keys
+    string[] public allDepartments;
+
+    // Reentrancy guard
+    bool private locked;
 
     constructor() {
         companyAccount = msg.sender;
         companyAdmins.push(msg.sender);
+        locked = false;  // Initialize the reentrancy lock
     }
 
     modifier onlyCompanyAdmin() {
@@ -26,17 +29,50 @@ contract CompanyFunds {
         _;
     }
 
-    modifier onlyDepartmentAdmin(address department) {
+    modifier onlyDepartmentAdmin(string memory departmentName) {
         require(
-            departments[department].isAdmin[msg.sender],
+            isDepartmentAdmin(departmentName, msg.sender),
             "Only department admin is allowed"
         );
         _;
     }
 
+    modifier noReentrancy() {
+        require(!locked, "Reentrancy detected");
+        locked = true;
+        _;
+        locked = false;
+    }
+
+    // 💡 Events for better transparency
+    event DepartmentCreated(string departmentName, address admin);
+    event FundsRequested(string departmentName, uint256 amount);
+    event FundsApproved(string departmentName, uint256 amount);
+    event FundsWithdrawn(string departmentName, address recipient, uint256 amount);
+    event CompanyAdminAdded(address admin);
+
+    // ✅ Fallback and Receive functions
+    receive() external payable {
+        emit FundsApproved("ETH Transfer", msg.value);
+    }
+
+    fallback() external payable {
+        emit FundsApproved("ETH Transfer", msg.value);
+    }
+
     function isCompanyAdmin(address _admin) public view returns (bool) {
         for (uint256 i = 0; i < companyAdmins.length; i++) {
             if (companyAdmins[i] == _admin) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    function isDepartmentAdmin(string memory departmentName, address _admin) public view returns (bool) {
+        Department storage dept = departments[departmentName];
+        for (uint256 i = 0; i < dept.admins.length; i++) {
+            if (dept.admins[i] == _admin) {
                 return true;
             }
         }
@@ -49,82 +85,75 @@ contract CompanyFunds {
             "Only company account can set admins"
         );
         companyAdmins.push(_admin);
+        emit CompanyAdminAdded(_admin);
     }
 
-    function setDepartmentAdmin(
-        address _department,
-        address _admin,
-        string memory _departmentName
+    function createDepartment(
+        string memory _departmentName,
+        address _admin
     ) external onlyCompanyAdmin {
-        departments[_department].isAdmin[_admin] = true;
-        departments[_department].admins.push(_admin);
-        departments[_department].departmentName = _departmentName;
+        require(bytes(departments[_departmentName].departmentName).length == 0, "Department already exists");
 
-        if (!contains(allDepartments, _department)) {
-            allDepartments.push(_department);
-        }
+        Department storage newDept = departments[_departmentName];
+        newDept.admins.push(_admin);
+        newDept.departmentName = _departmentName;
+
+        allDepartments.push(_departmentName);
+        
+        emit DepartmentCreated(_departmentName, _admin);
     }
 
-    function contains(address[] memory array, address element)
-        internal
-        pure
-        returns (bool)
-    {
-        for (uint256 i = 0; i < array.length; i++) {
-            if (array[i] == element) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    function requestFunds(address _address, uint256 _amount) external {
+    function requestFunds(string memory departmentName, uint256 _amount) external {
         require(_amount > 0, "Amount must be greater than 0");
-        require(
-            departments[_address].balance + _amount >=
-                departments[_address].balance,
-            "Integer overflow"
-        );
-        departments[_address].requests[_amount] = true;
-        departments[_address].requestsLists.push(_amount);
+        
+        Department storage dept = departments[departmentName];
+        
+        dept.requestsLists.push(_amount);
+        dept.requests[_amount] = true;
+
+        emit FundsRequested(departmentName, _amount);
     }
 
-    function approveFunds(address _department)
-        external
-        payable
-        onlyCompanyAdmin
-    {
-        departments[_department].balance += msg.value;
-        departments[_department].requests[msg.value] = false;
+    function approveFunds(string memory departmentName) external payable onlyCompanyAdmin {
+        require(msg.value > 0, "Must send funds");
+
+        Department storage dept = departments[departmentName];
+        dept.balance += msg.value;
+        dept.requests[msg.value] = false;
+
+        emit FundsApproved(departmentName, msg.value);
     }
 
-    function withdraw(address _address, uint256 _amount) external {
+    function withdraw(string memory departmentName, uint256 _amount) external onlyDepartmentAdmin(departmentName) noReentrancy {
         require(_amount > 0, "Amount must be greater than 0");
-        departments[_address].balance -= _amount;
-        payable(_address).transfer(_amount);
+
+        Department storage dept = departments[departmentName];
+        require(dept.balance >= _amount, "Insufficient balance");
+
+        // ✅ Transfer first to prevent reentrancy
+        payable(msg.sender).transfer(_amount);
+        dept.balance -= _amount;
+
+        emit FundsWithdrawn(departmentName, msg.sender, _amount);
     }
 
     function getCompanyBalance() external view returns (uint256) {
         return address(this).balance;
     }
 
-    function getDepartmentBalance(address _department)
-        external
-        view
-        returns (uint256)
-    {
-        return departments[_department].balance;
+    function getDepartmentBalance(string memory departmentName) external view returns (uint256) {
+        return departments[departmentName].balance;
     }
 
     function getCompanyAdmins() external view returns (address[] memory) {
         return companyAdmins;
     }
 
-    function getAllDepartments() external view returns (address[] memory) {
+    function getAllDepartments() external view returns (string[] memory) {
         return allDepartments;
     }
 
-    function getDepartmentData(address _departmentAddress)
+    function getDepartmentData(string memory departmentName)
         external
         view
         returns (
@@ -134,7 +163,7 @@ contract CompanyFunds {
             uint256[] memory
         )
     {
-        Department storage department = departments[_departmentAddress];
+        Department storage department = departments[departmentName];
         return (
             department.admins,
             department.balance,
@@ -143,7 +172,7 @@ contract CompanyFunds {
         );
     }
 
-    function requestStatus(address _address, uint256 _amount) external view returns(bool){
-        return departments[_address].requests[_amount];
+    function requestStatus(string memory departmentName, uint256 _amount) external view returns (bool) {
+        return departments[departmentName].requests[_amount];
     }
 }
